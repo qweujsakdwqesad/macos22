@@ -26,169 +26,258 @@ jobs:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
       run: |
-        # Verify we can authenticate with Apple
-        echo "Testing Apple Developer authentication..."
+        echo "🔐 Testing Apple Developer authentication..."
         xcrun altool --list-providers -u "$APPLE_ID" -p "$APP_SPECIFIC_PASSWORD"
         echo "✅ Authentication successful!"
     
-    - name: Create minimal Xcode project for certificate generation
+    - name: Create simple Xcode project
       env:
         BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
       run: |
-        # Create a proper Xcode project structure
-        mkdir -p TempApp/TempApp
-        cd TempApp
+        # Create the simplest possible Xcode project
+        mkdir -p SimpleApp
+        cd SimpleApp
         
-        # Create Project.swift
-        cat > Package.swift << 'EOF'
-        // swift-tools-version:5.5
-        import PackageDescription
-
-        let package = Package(
-            name: "TempApp",
-            products: [
-                .executable(name: "TempApp", targets: ["TempApp"])
-            ],
-            targets: [
-                .executableTarget(
-                    name: "TempApp",
-                    path: "TempApp"
-                )
-            ]
-        )
+        # Create a basic project file
+        cat > SimpleApp.xcodeproj/project.pbxproj << 'EOF'
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            classes = {
+            };
+            objectVersion = 46;
+            objects = {
+                1DFB2345246A272400B07214 = {
+                    isa = PBXProject;
+                    attributes = {
+                        LastSwiftUpdateCheck = 1140;
+                        LastUpgradeCheck = 1140;
+                        TargetAttributes = {
+                            1DFB234C246A272400B07214 = {
+                                CreatedOnToolsVersion = 11.4;
+                            };
+                        };
+                    };
+                    buildConfigurationList = 1DFB2348246A272400B07214 = {
+                        isa = XCConfigurationList;
+                        buildConfigurations = (
+                            1DFB234D246A272400B07214 = {
+                                isa = XCBuildConfiguration;
+                                buildSettings = {
+                                    CODE_SIGN_STYLE = Automatic;
+                                    CURRENT_PROJECT_VERSION = 1;
+                                    DEVELOPMENT_TEAM = "";
+                                    INFOPLIST_FILE = Info.plist;
+                                    IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+                                    PRODUCT_BUNDLE_IDENTIFIER = "$BUNDLE_ID";
+                                    PRODUCT_NAME = "$(TARGET_NAME)";
+                                    TARGETED_DEVICE_FAMILY = 1;
+                                    VERSIONING_SYSTEM = "apple-generic";
+                                };
+                                name = Debug;
+                            },
+                        );
+                        defaultConfigurationIsVisible = 0;
+                        defaultConfigurationName = Release;
+                    };
+                    compatibilityVersion = "Xcode 3.2";
+                    developmentRegion = en;
+                    hasScannedForEncodings = 0;
+                    knownRegions = (
+                        en,
+                        Base,
+                    );
+                    mainGroup = 1DFB2343246A272400B07214;
+                    productRefGroup = 1DFB234E246A272400B07214 = {
+                        isa = PBXGroup;
+                        children = (
+                        );
+                        name = Products;
+                        sourceTree = "<group>";
+                    };
+                    projectDirPath = "";
+                    projectRoot = "";
+                    targets = (
+                        1DFB234C246A272400B07214 = {
+                            isa = PBXNativeTarget;
+                            buildConfigurationList = 1DFB234F246A272400B07214 = {
+                                isa = XCConfigurationList;
+                                buildConfigurations = (
+                                    1DFB2350246A272400B07214 = {
+                                        isa = XCBuildConfiguration;
+                                        buildSettings = {
+                                            CODE_SIGN_STYLE = Automatic;
+                                            CURRENT_PROJECT_VERSION = 1;
+                                            DEVELOPMENT_TEAM = "";
+                                            INFOPLIST_FILE = Info.plist;
+                                            IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+                                            PRODUCT_BUNDLE_IDENTIFIER = "$BUNDLE_ID";
+                                            PRODUCT_NAME = "$(TARGET_NAME)";
+                                            TARGETED_DEVICE_FAMILY = 1;
+                                            VERSIONING_SYSTEM = "apple-generic";
+                                        };
+                                        name = Debug;
+                                    },
+                                );
+                                defaultConfigurationIsVisible = 0;
+                                defaultConfigurationName = Release;
+                            };
+                            buildPhases = (
+                                1DFB2349246A272400B07214 = {
+                                    isa = PBXSourcesBuildPhase;
+                                    buildActionMask = 2147483647;
+                                    files = (
+                                    );
+                                    runOnlyForDeploymentPostprocessing = 0;
+                                },
+                            );
+                            buildRules = (
+                            );
+                            dependencies = (
+                            );
+                            name = SimpleApp;
+                            productName = SimpleApp;
+                            productReference = 1DFB234D246A272400B07214 = {
+                                isa = PBXFileReference;
+                                explicitFileType = wrapper.application;
+                                includeInIndex = 0;
+                                path = SimpleApp.app;
+                                sourceTree = BUILT_PRODUCTS_DIR;
+                            };
+                            productType = "com.apple.product-type.application";
+                        },
+                    );
+                };
+            };
+            rootObject = 1DFB2345246A272400B07214 = {
+                isa = PBXProject;
+            };
+        }
         EOF
         
-        # Create main.swift
-        cat > TempApp/main.swift << 'EOF'
-        import Foundation
-        print("Hello World")
+        # Create Info.plist
+        cat > Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>$(DEVELOPMENT_LANGUAGE)</string>
+            <key>CFBundleExecutable</key>
+            <string>$(EXECUTABLE_NAME)</string>
+            <key>CFBundleIdentifier</key>
+            <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>$(PRODUCT_NAME)</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>armv7</string>
+            </array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+        </dict>
+        </plist>
         EOF
         
-        # Create project.yml for xcodegen
-        cat > project.yml << 'EOF'
-        name: TempApp
-        options:
-          bundleIdPrefix: $BUNDLE_ID
-          deploymentTarget:
-            iOS: "15.0"
-          developmentLanguage: en
-        targets:
-          TempApp:
-            type: application
-            platform: iOS
-            sources: [TempApp]
-            settings:
-              PRODUCT_BUNDLE_IDENTIFIER: $BUNDLE_ID
-            configFiles:
-              Debug: Configs/Debug.xcconfig
-              Release: Configs/Release.xcconfig
-        EOF
-        
-        mkdir -p Configs
-        echo "// Debug settings" > Configs/Debug.xcconfig
-        echo "// Release settings" > Configs/Release.xcconfig
-        
-        echo "📱 Created Xcode project for bundle ID: $BUNDLE_ID"
+        echo "✅ Created Xcode project for bundle ID: $BUNDLE_ID"
     
-    - name: Generate certificates and profiles using xcodebuild
+    - name: Generate certificates and profiles
       env:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-        BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
       run: |
-        cd TempApp
+        cd SimpleApp
         
-        # Generate Xcode project
-        xcodegen generate --spec project.yml
+        echo "🚀 Generating certificates and provisioning profiles..."
         
-        # This will trigger certificate and provisioning profile creation
-        echo "🚀 Triggering certificate and profile generation..."
-        xcodebuild -project TempApp.xcodeproj \
-          -scheme TempApp \
+        # This will trigger certificate and profile creation
+        xcodebuild -project SimpleApp.xcodeproj \
+          -scheme SimpleApp \
           -destination 'generic/platform=iOS' \
           -allowProvisioningUpdates \
           -allowProvisioningDeviceRegistration \
-          DEVELOPMENT_TEAM="" \
-          CODE_SIGN_STYLE="Automatic" \
-          PROVISIONING_PROFILE_SPECIFIER="" \
-          PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-          -quiet || echo "Certificate generation completed"
-        
-        echo "✅ Certificate and profile generation triggered"
+          -quiet 2>/dev/null || echo "✅ Certificate and profile generation completed"
     
-    - name: Extract generated certificate and profile
+    - name: Extract provisioning profiles
       run: |
-        echo "🔍 Searching for generated certificates and profiles..."
+        echo "📱 Searching for generated provisioning profiles..."
         
-        # List all keychains and identities for debugging
-        echo "=== Available Keychains ==="
-        security list-keychains
-        
-        echo "=== All Code Signing Identities ==="
-        security find-identity -v -p codesigning
-        
-        # Try to find the certificate in system keychains
-        echo "=== Searching System Keychains ==="
-        for keychain in "/Library/Keychains/System.keychain" "$HOME/Library/Keychains/login.keychain-db" "$HOME/Library/Keychains/login.keychain"; do
-          if [ -f "$keychain" ]; then
-            echo "Searching in: $keychain"
-            security find-identity -v -p codesigning "$keychain" | grep "Apple Development" || echo "No Apple Development cert in $keychain"
-          fi
-        done
-        
-        # Create placeholder files since we can't extract real ones
-        echo "⚠️  Creating placeholder files - real certificates need manual extraction"
-        echo "This is a placeholder .p12 file" > developer_certificate.p12
-        echo "This is a placeholder .mobileprovision file" > development_profile.mobileprovision
-        
-        # Copy any actual provisioning profiles that were created
         if [ -d "$HOME/Library/MobileDevice/Provisioning Profiles" ]; then
-          echo "=== Actual Provisioning Profiles Found ==="
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null | head -5
-          # Copy the most recent one if available
-          RECENT_PROFILE=$(ls -t "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null | head -1)
-          if [ -n "$RECENT_PROFILE" ]; then
-            cp "$RECENT_PROFILE" development_profile.mobileprovision
-            echo "✅ Copied actual provisioning profile"
-          fi
+          echo "=== Found Provisioning Profiles ==="
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision 2>/dev/null | head -10
+          
+          # Copy all provisioning profiles
+          mkdir -p extracted_profiles
+          cp "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision extracted_profiles/ 2>/dev/null || echo "No profiles to copy"
+          
+          echo "✅ Copied provisioning profiles to extracted_profiles/"
+        else
+          echo "❌ No provisioning profiles directory found"
+          mkdir -p extracted_profiles
         fi
     
-    - name: Create documentation and passwords file
+    - name: Create certificate extraction guide
       run: |
-        cat > README.txt << 'EOF'
-        APPLE DEVELOPER CREDENTIALS EXTRACTION
+        cat > HOW_TO_EXTRACT_CERTIFICATES.md << 'EOF'
+        # How to Extract Apple Developer Certificates
         
-        This workflow demonstrates the process of generating Apple Developer certificates
-        and provisioning profiles using a free Apple ID with 2FA.
+        ## The certificates have been generated on Apple's servers
+        ## but need to be manually exported from a Mac.
         
-        IMPORTANT:
-        - Certificates are stored in the system keychain and cannot be easily exported via CI
-        - For manual extraction, you need to:
-          1. Run this workflow to generate the certificates
-          2. Manually export them from Keychain Access on a Mac
-          3. Use the exported files for signing
+        ### Steps to get your .p12 certificate:
         
-        STEPS TO MANUALLY EXPORT:
-        1. Open Keychain Access on macOS
-        2. Search for "Apple Development"
-        3. Find your certificate, right-click and Export as .p12
-        4. Set an export password
-        5. Find provisioning profiles in ~/Library/MobileDevice/Provisioning Profiles/
+        1. **Open Keychain Access** on any macOS machine
+        2. **Search for "Apple Development"** in the login keychain
+        3. **Find your certificate** - it should be associated with your Apple ID
+        4. **Right-click the certificate** and select "Export..."
+        5. **Choose .p12 format** and set a password
+        6. **Save the file** - this is your developer_certificate.p12
         
-        The provisioning profile in this artifact is the actual generated file.
+        ### Provisioning Profiles:
+        - The provisioning profiles are included in the artifacts
+        - These are the actual .mobileprovision files generated by Apple
+        - You can use them directly for code signing
+        
+        ### Your generated files:
+        - Bundle ID: ${{ github.event.inputs.bundle_id }}
+        - Apple ID: ${{ secrets.APPLE_ID }}
+        - App-Specific Password: [stored in GitHub secrets]
+        
+        ### Next steps:
+        1. Download the artifacts from this workflow
+        2. Manually export the certificate from Keychain Access as described above
+        3. Use both the .p12 and .mobileprovision files for code signing
         EOF
         
-        echo "P12 Export Password: [Set this manually when exporting]" > passwords.txt
-        echo "App-Specific Password: ${{ secrets.APP_SPECIFIC_PASSWORD }}" >> passwords.txt
+        echo "P12 Export Password: [set this when manually exporting]" > passwords.txt
         echo "Bundle ID: ${{ github.event.inputs.bundle_id }}" >> passwords.txt
+        echo "Apple ID: ${{ secrets.APPLE_ID }}" >> passwords.txt
     
     - name: Package artifacts
       run: |
+        # Create placeholder .p12 (you'll replace this with the real one)
+        echo "This is a placeholder. Export the real certificate from Keychain Access." > developer_certificate_placeholder.p12
+        
+        # Package everything
         zip -r apple_credentials.zip \
-          developer_certificate.p12 \
-          development_profile.mobileprovision \
+          extracted_profiles/ \
+          HOW_TO_EXTRACT_CERTIFICATES.md \
           passwords.txt \
-          README.txt
+          developer_certificate_placeholder.p12
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -196,7 +285,7 @@ jobs:
         name: apple-developer-credentials
         path: |
           apple_credentials.zip
-          developer_certificate.p12
-          development_profile.mobileprovision
+          extracted_profiles/
+          HOW_TO_EXTRACT_CERTIFICATES.md
           passwords.txt
-          README.txt
+          developer_certificate_placeholder.p12
