@@ -1,272 +1,137 @@
-name: Extract Apple Developer Credentials
+name: Sign IPA with Free Apple ID
 
 on:
   workflow_dispatch:
     inputs:
+      ipa_path:
+        description: 'Path to your IPA file in the repo'
+        required: true
+        default: 'app.ipa'
       bundle_id:
-        description: 'Your App Bundle Identifier (e.g., com.example.myapp)'
+        description: 'Your app bundle identifier'
         required: true
         default: 'com.yourcompany.yourapp'
 
 jobs:
-  extract-credentials:
+  sign-ipa:
     runs-on: macos-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Setup Xcode
       run: |
         sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
-        xcodebuild -version
-    
-    - name: Authenticate with Apple Developer
+
+    - name: Authenticate with Apple
       env:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
       run: |
-        echo "🔐 Testing Apple Developer authentication..."
+        echo "🔐 Authenticating with Apple..."
         xcrun altool --list-providers -u "$APPLE_ID" -p "$APP_SPECIFIC_PASSWORD"
-        echo "✅ Authentication successful!"
-    
-    - name: Create simple Xcode project
+
+    - name: Prepare for signing
+      run: |
+        # Create a simple project to generate certificates
+        mkdir -p temp_signing_project
+        cd temp_signing_project
+        
+        cat > Package.swift << 'EOF'
+        // swift-tools-version:5.5
+        import PackageDescription
+        let package = Package(name: "TempSigning", products: [], targets: [])
+        EOF
+        
+        # Trigger certificate generation
+        xcodebuild -allowProvisioningUpdates -scheme TempSigning -quiet 2>/dev/null || echo "Certificates ready"
+
+    - name: Extract and prepare IPA for signing
+      run: |
+        echo "📦 Preparing IPA for signing..."
+        
+        # Extract IPA
+        unzip -q "${{ github.event.inputs.ipa_path }}" -d extracted_app/
+        
+        # Find the .app bundle
+        APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
+        echo "Found app bundle: $APP_BUNDLE"
+        
+        # Remove existing code signature
+        rm -rf "$APP_BUNDLE/_CodeSignature"
+        rm -f "$APP_BUNDLE/embedded.mobileprovision"
+
+    - name: Resign the app
       env:
         BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
       run: |
-        # Create directory first
-        mkdir -p SimpleApp
-        cd SimpleApp
+        APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
         
-        # Create project directory structure
-        mkdir -p SimpleApp.xcodeproj
+        echo "🔏 Signing app bundle: $APP_BUNDLE"
         
-        # Create project.pbxproj
-        cat > SimpleApp.xcodeproj/project.pbxproj << 'EOF'
-        {
-            archiveVersion = 1;
-            classes = {};
-            objectVersion = 50;
-            objects = {
-                1DFB2345246A272400B07214 = {
-                    isa = PBXProject;
-                    attributes = {
-                        LastSwiftUpdateCheck = 1140;
-                        LastUpgradeCheck = 1140;
-                        TargetAttributes = {
-                            1DFB234C246A272400B07214 = {
-                                CreatedOnToolsVersion = 11.4;
-                            };
-                        };
-                    };
-                    buildConfigurationList = 1DFB2348246A272400B07214 = {
-                        isa = XCConfigurationList;
-                        buildConfigurations = (
-                            1DFB234D246A272400B07214 = {
-                                isa = XCBuildConfiguration;
-                                buildSettings = {
-                                    CODE_SIGN_STYLE = Automatic;
-                                    PRODUCT_BUNDLE_IDENTIFIER = "$BUNDLE_ID";
-                                    PRODUCT_NAME = SimpleApp;
-                                };
-                                name = Debug;
-                            },
-                        );
-                        defaultConfigurationIsVisible = 0;
-                        defaultConfigurationName = Release;
-                    };
-                    compatibilityVersion = "Xcode 3.2";
-                    developmentRegion = en;
-                    hasScannedForEncodings = 0;
-                    knownRegions = ( en );
-                    mainGroup = 1DFB2343246A272400B07214;
-                    projectDirPath = "";
-                    projectRoot = "";
-                    targets = (
-                        1DFB234C246A272400B07214 = {
-                            isa = PBXNativeTarget;
-                            buildConfigurationList = 1DFB234F246A272400B07214 = {
-                                isa = XCConfigurationList;
-                                buildConfigurations = (
-                                    1DFB2350246A272400B07214 = {
-                                        isa = XCBuildConfiguration;
-                                        buildSettings = {
-                                            CODE_SIGN_STYLE = Automatic;
-                                            PRODUCT_BUNDLE_IDENTIFIER = "$BUNDLE_ID";
-                                            PRODUCT_NAME = SimpleApp;
-                                        };
-                                        name = Debug;
-                                    },
-                                );
-                                defaultConfigurationIsVisible = 0;
-                                defaultConfigurationName = Release;
-                            };
-                            buildPhases = ( );
-                            buildRules = ( );
-                            dependencies = ( );
-                            name = SimpleApp;
-                            productName = SimpleApp;
-                            productReference = 1DFB234D246A272400B07214 = {
-                                isa = PBXFileReference;
-                                explicitFileType = wrapper.application;
-                                includeInIndex = 0;
-                                path = SimpleApp.app;
-                                sourceTree = BUILT_PRODUCTS_DIR;
-                            };
-                            productType = "com.apple.product-type.application";
-                        },
-                    );
-                };
-            };
-            rootObject = 1DFB2345246A272400B07214;
-        }
-        EOF
+        # Get the development identity
+        IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | awk -F'"' '{print $2}')
         
-        # Create Info.plist
-        cat > Info.plist << 'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleDevelopmentRegion</key>
-            <string>en</string>
-            <key>CFBundleExecutable</key>
-            <string>SimpleApp</string>
-            <key>CFBundleIdentifier</key>
-            <string>$BUNDLE_ID</string>
-            <key>CFBundleInfoDictionaryVersion</key>
-            <string>6.0</string>
-            <key>CFBundleName</key>
-            <string>SimpleApp</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>CFBundleVersion</key>
-            <string>1</string>
-            <key>LSRequiresIPhoneOS</key>
-            <true/>
-        </dict>
-        </plist>
-        EOF
-        
-        echo "✅ Created Xcode project for bundle ID: $BUNDLE_ID"
-        ls -la
-    
-    - name: Generate certificates and profiles
-      env:
-        APPLE_ID: ${{ secrets.APPLE_ID }}
-        APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-      run: |
-        cd SimpleApp
-        
-        echo "🚀 Generating certificates and provisioning profiles..."
-        
-        # Create a scheme
-        mkdir -p xcshareddata/xcschemes
-        cat > xcshareddata/xcschemes/SimpleApp.xcscheme << 'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <Scheme LastUpgradeVersion = "1140" version = "1.3">
-          <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES"></BuildAction>
-          <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES"></TestAction>
-          <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
-            <BuildableProductRunnable runnableDebuggingMode = "0">
-              <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "1DFB234C246A272400B07214" BuildableName = "SimpleApp.app" BlueprintName = "SimpleApp" ReferencedContainer = "container:SimpleApp.xcodeproj"></BuildableReference>
-            </BuildableProductRunnable>
-          </LaunchAction>
-          <ProfileAction buildConfiguration = "Debug" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES"></ProfileAction>
-          <AnalyzeAction buildConfiguration = "Debug"></AnalyzeAction>
-          <ArchiveAction buildConfiguration = "Debug" revealArchiveInOrganizer = "YES"></ArchiveAction>
-        </Scheme>
-        EOF
-        
-        # This will trigger certificate and profile creation
-        xcodebuild -project SimpleApp.xcodeproj \
-          -scheme SimpleApp \
-          -destination 'generic/platform=iOS' \
-          -allowProvisioningUpdates \
-          -allowProvisioningDeviceRegistration \
-          -quiet 2>/dev/null || echo "✅ Certificate and profile generation completed"
-    
-    - name: Extract provisioning profiles
-      run: |
-        echo "📱 Searching for generated provisioning profiles..."
-        
-        if [ -d "$HOME/Library/MobileDevice/Provisioning Profiles" ]; then
-          echo "=== Found Provisioning Profiles ==="
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null | head -10
-          
-          # Copy all provisioning profiles
-          mkdir -p extracted_profiles
-          cp "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision extracted_profiles/ 2>/dev/null || echo "No profiles to copy"
-          
-          PROFILE_COUNT=$(ls extracted_profiles/*.mobileprovision 2>/dev/null | wc -l | tr -d ' ')
-          echo "✅ Copied $PROFILE_COUNT provisioning profiles"
-        else
-          echo "❌ No provisioning profiles directory found"
-          mkdir -p extracted_profiles
+        if [ -z "$IDENTITY" ]; then
+          echo "❌ No signing identity found"
+          security find-identity -v -p codesigning
+          exit 1
         fi
-    
-    - name: Create certificate extraction guide
+        
+        echo "Using identity: $IDENTITY"
+        
+        # Sign the app bundle
+        codesign --force --deep --sign "$IDENTITY" --timestamp --options runtime "$APP_BUNDLE"
+        
+        echo "✅ App signed successfully!"
+
+    - name: Create new IPA with signed app
       run: |
-        cat > HOW_TO_EXTRACT_CERTIFICATES.md << 'EOF'
-        # Apple Developer Credentials - Extraction Guide
+        echo "📦 Creating new signed IPA..."
         
-        ## What's included in this download:
+        # Create new IPA
+        cd extracted_app
+        zip -qr ../signed_app.ipa ./*
+        cd ..
         
-        ### ✅ Provisioning Profiles
-        - These are the actual .mobileprovision files generated by Apple
-        - You can use them directly for code signing
-        - Located in the 'extracted_profiles' folder
-        
-        ### 🔐 Certificate (Manual Extraction Required)
-        - The Apple Development certificate has been generated on Apple's servers
-        - You need to manually export it from Keychain Access on a Mac
-        
-        ## Steps to get your .p12 certificate:
-        
-        1. **Open Keychain Access** on any macOS machine
-        2. **Search for "Apple Development"** in the login keychain
-        3. **Find your certificate** (it should show your Apple ID: ${{ secrets.APPLE_ID }})
-        4. **Right-click the certificate** and select "Export..."
-        5. **Choose .p12 format** and set a password
-        6. **Save the file** as 'developer_certificate.p12'
-        
-        ## Your project details:
-        - Bundle ID: ${{ github.event.inputs.bundle_id }}
-        - Apple ID: ${{ secrets.APPLE_ID }}
-        
-        ## Next steps:
-        1. Use the provisioning profiles from this download
-        2. Manually export the certificate as described above
-        3. Use both files for code signing your IPA files
-        EOF
-        
-        echo "Bundle ID: ${{ github.event.inputs.bundle_id }}" > project_info.txt
-        echo "Apple ID: ${{ secrets.APPLE_ID }}" >> project_info.txt
-        echo "P12 Password: [set when manually exporting]" >> project_info.txt
-    
-    - name: Package artifacts
-      run: |
-        # Create a simple README
-        echo "Apple Developer Credentials Package" > README.txt
-        echo "Generated: $(date)" >> README.txt
-        echo "Bundle ID: ${{ github.event.inputs.bundle_id }}" >> README.txt
-        
-        # Package everything
-        zip -r apple_credentials.zip \
-          extracted_profiles/ \
-          HOW_TO_EXTRACT_CERTIFICATES.md \
-          project_info.txt \
-          README.txt
-    
-    - name: Upload artifacts
+        echo "✅ Signed IPA created: signed_app.ipa"
+
+    - name: Upload signed IPA
       uses: actions/upload-artifact@v4
       with:
-        name: apple-developer-credentials
-        path: |
-          apple_credentials.zip
-          extracted_profiles/
-          HOW_TO_EXTRACT_CERTIFICATES.md
-          project_info.txt
-          README.txt
+        name: signed-ipa
+        path: signed_app.ipa
+
+    - name: Create installation instructions
+      run: |
+        cat > INSTALL.md << 'EOF'
+        # How to Install Your Signed IPA
+        
+        ## Method 1: AltServer (Recommended)
+        1. Download the signed IPA from artifacts
+        2. Use AltServer to install to your device
+        3. Your device must be registered with your Apple ID
+        
+        ## Method 2: Xcode
+        1. Download the signed IPA  
+        2. Open Xcode → Window → Devices and Simulators
+        3. Drag IPA to your device
+        
+        ## Method 3: Sideloadly
+        1. Use Sideloadly with your Apple ID
+        2. Drag the signed IPA into Sideloadly
+        3. Install to your device
+        
+        ## Important Notes:
+        - This uses a free Apple Developer account
+        - App expires in 7 days
+        - You can only have 3 active apps
+        - Your device UDID must be registered
+        EOF
+
+    - name: Upload instructions
+      uses: actions/upload-artifact@v4
+      with:
+        name: installation-instructions
+        path: INSTALL.md
