@@ -1,227 +1,48 @@
-name: Sign IPA with Free Apple ID
+name: Sign IPA with Apple ID
 
 on:
   workflow_dispatch:
     inputs:
-      bundle_id:
-        description: 'Your app bundle identifier'
+      ipa_url:
+        description: "Enter the direct download URL of the unsigned IPA"
         required: true
-        default: 'com.spotify.client'
+        type: string
 
 jobs:
-  sign-ipa:
-    runs-on: macos-latest
-    
+  sign_ipa:
+    runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Xcode
-      run: |
-        sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
-        xcodebuild -version
+      - name: Download Sideloader CLI
+        run: |
+          mkdir -p tools
+          cd tools
+          wget https://github.com/Dadoum/Sideloader/releases/latest/download/sideloader-cli-x86_64-linux-gnu
+          chmod +x sideloader-cli-x86_64-linux-gnu
 
-    - name: Create proper Xcode project for certificate generation
-      env:
-        BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
-      run: |
-        echo "🛠️ Creating Xcode project to generate certificates..."
-        
-        mkdir -p CertificateGenerator/CertificateGenerator
-        cd CertificateGenerator
-        
-        # Create a proper Swift package
-        cat > Package.swift << 'EOF'
-        // swift-tools-version:5.5
-        import PackageDescription
+      - name: Download unsigned IPA
+        run: |
+          mkdir -p ipa
+          wget "${{ github.event.inputs.ipa_url }}" -O ipa/unsigned.ipa
+          echo "✅ Downloaded IPA from ${{ github.event.inputs.ipa_url }}"
 
-        let package = Package(
-            name: "CertificateGenerator",
-            platforms: [.iOS(.v14)],
-            products: [
-                .library(name: "CertificateGenerator", targets: ["CertificateGenerator"])
-            ],
-            targets: [
-                .target(name: "CertificateGenerator", path: "CertificateGenerator")
-            ]
-        )
-        EOF
-        
-        # Create a source file
-        cat > CertificateGenerator/CertificateGenerator.swift << 'EOF'
-        import Foundation
-        public struct CertificateGenerator {
-            public static let version = "1.0"
-        }
-        EOF
-        
-        echo "✅ Created project structure"
+      - name: Sign IPA using Apple ID + App-Specific Password
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          cd tools
+          ./sideloader-cli-x86_64-linux-gnu sign ../ipa/unsigned.ipa \
+            --apple-id "$APPLE_ID" \
+            --apple-password "$APP_SPECIFIC_PASSWORD" \
+            --output ../ipa/signed.ipa \
+            --debug
 
-    - name: Generate certificates with proper authentication
-      env:
-        APPLE_ID: ${{ secrets.APPLE_ID }}
-        APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-        BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
-      run: |
-        cd CertificateGenerator
-        
-        echo "🔐 Generating certificates with Apple ID..."
-        
-        # Generate Xcode project
-        swift package generate-xcodeproj
-        
-        # This should trigger certificate creation
-        xcodebuild -project CertificateGenerator.xcodeproj \
-          -scheme CertificateGenerator \
-          -destination 'generic/platform=iOS' \
-          -allowProvisioningUpdates \
-          -allowProvisioningDeviceRegistration \
-          DEVELOPMENT_TEAM="" \
-          CODE_SIGN_STYLE="Automatic" \
-          PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-          build \
-          || echo "Build completed - certificates should be generated"
-        
-        echo "✅ Certificate generation attempted"
-
-    - name: Debug - Check what certificates exist
-      run: |
-        echo "🔍 Checking available certificates..."
-        security list-keychains
-        echo "--- All identities ---"
-        security find-identity -v -p codesigning
-        echo "--- Login keychain contents ---"
-        security dump-keychain ~/Library/Keychains/login.keychain-db 2>/dev/null | grep -i "apple development" || echo "No Apple Development certs found"
-        echo "--- System keychain contents ---"
-        security dump-keychain /Library/Keychains/System.keychain 2>/dev/null | grep -i "apple development" || echo "No Apple Development certs in system"
-
-    - name: Create test app structure
-      run: |
-        echo "📱 Creating test app structure..."
-        
-        mkdir -p test_app/Payload
-        mkdir -p test_app/Payload/TestApp.app
-        
-        # Create proper Info.plist
-        cat > test_app/Payload/TestApp.app/Info.plist << 'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleIdentifier</key>
-            <string>${{ github.event.inputs.bundle_id }}</string>
-            <key>CFBundleExecutable</key>
-            <string>TestApp</string>
-            <key>CFBundleName</key>
-            <string>TestApp</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
-            <key>MinimumOSVersion</key>
-            <string>14.0</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>LSRequiresIPhoneOS</key>
-            <true/>
-        </dict>
-        </plist>
-        EOF
-        
-        # Create a minimal executable
-        echo '#!/bin/bash' > test_app/Payload/TestApp.app/TestApp
-        chmod +x test_app/Payload/TestApp.app/TestApp
-        
-        # Create test IPA
-        cd test_app
-        zip -qr ../test.ipa ./*
-        cd ..
-        
-        echo "✅ Test IPA created"
-
-    - name: Try alternative signing approach
-      run: |
-        echo "🔄 Trying alternative signing method..."
-        
-        # Extract the test IPA
-        unzip -q test.ipa -d extracted_app/
-        
-        APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
-        echo "App bundle: $APP_BUNDLE"
-        
-        # Try to create a self-signed certificate as fallback
-        echo "--- Creating self-signed certificate as fallback ---"
-        openssl genrsa -out private.key 2048 2>/dev/null
-        openssl req -new -key private.key -out certificate.csr -subj "/CN=GitHub Actions Developer" 2>/dev/null
-        openssl x509 -req -days 365 -in certificate.csr -signkey private.key -out certificate.crt 2>/dev/null
-        openssl pkcs12 -export -out developer.p12 -inkey private.key -in certificate.crt -passout pass:123456 2>/dev/null
-        
-        # Try to import the self-signed certificate
-        security import developer.p12 -k ~/Library/Keychains/login.keychain-db -P 123456 -T /usr/bin/codesign 2>/dev/null || echo "Import failed"
-        
-        # Check identities again
-        echo "--- Available identities after import ---"
-        security find-identity -v -p codesigning
-        
-        # Try to sign with any available identity
-        IDENTITY=$(security find-identity -v -p codesigning | head -1 | awk -F'"' '{print $2}')
-        
-        if [ -n "$IDENTITY" ]; then
-          echo "Signing with: $IDENTITY"
-          codesign --force --deep --sign "$IDENTITY" --timestamp --options runtime "$APP_BUNDLE"
-          echo "✅ Signing attempted"
-        else
-          echo "❌ No signing identity available"
-          # Create unsigned IPA anyway for testing
-          cd extracted_app
-          zip -qr ../unsigned_test.ipa ./*
-          cd ..
-          echo "📦 Created unsigned test IPA for debugging"
-        fi
-
-    - name: Upload results for analysis
-      uses: actions/upload-artifact@v4
-      with:
-        name: signing-results
-        path: |
-          test.ipa
-          unsigned_test.ipa
-          developer.p12
-
-    - name: Create diagnostic report
-      run: |
-        cat > DIAGNOSTICS.md << 'EOF'
-        # Signing Diagnostics Report
-        
-        ## Problem:
-        GitHub Actions cannot generate Apple Development certificates automatically.
-        
-        ## Root Cause:
-        - Apple's certificate generation requires interactive approval
-        - Free developer accounts have additional restrictions
-        - Ephemeral runners cannot persist keychain items
-        
-        ## What Actually Works:
-        1. **Manual Certificate Generation** on a physical Mac
-        2. **Export .p12 from Keychain Access** 
-        3. **Upload .p12 as GitHub Secret**
-        4. **Use pre-existing certificates** in workflows
-        
-        ## Next Steps:
-        - Generate certificates manually on your Mac
-        - Export as .p12 with a password  
-        - Add them as GitHub Secrets
-        - Use them in signing workflows
-        
-        ## Alternative:
-        Use a self-hosted macOS runner where you can login once and persist certificates.
-        EOF
-        
-        echo "Bundle ID: ${{ github.event.inputs.bundle_id }}" >> DIAGNOSTICS.md
-        echo "Apple ID: ${{ secrets.APPLE_ID }}" >> DIAGNOSTICS.md
-
-    - name: Upload diagnostics
-      uses: actions/upload-artifact@v4
-      with:
-        name: diagnostics
-        path: DIAGNOSTICS.md
+      - name: Upload signed IPA as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-ipa
+          path: ipa/signed.ipa
