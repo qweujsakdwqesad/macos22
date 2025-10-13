@@ -21,42 +21,62 @@ jobs:
         sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
         xcodebuild -version
     
-    - name: Create temporary keychain
-      run: |
-        security create-keychain -p "temp123" build.keychain
-        security default-keychain -s build.keychain
-        security unlock-keychain -p "temp123" build.keychain
-        security set-keychain-settings -lut 3600 build.keychain
-    
     - name: Login to Apple Developer account with App-Specific Password
       env:
         APPLE_ID: ${{ secrets.APPLE_ID }}
         APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
       run: |
-        # Use app-specific password for authentication
-        xcrun altool --list-providers -u "$APPLE_ID" -p "$APP_SPECIFIC_PASSWORD" || echo "App-specific password verified"
+        # Create a simple project to trigger certificate creation
+        mkdir -p temp_project
+        cd temp_project
         
-        # Trigger provisioning profile creation
+        cat > Project.swift << 'EOF'
+        import PackageDescription
+        let package = Package(
+            name: "TempProject",
+            products: [],
+            targets: []
+        )
+        EOF
+        
+        # This will trigger Xcode to create certificates in the login keychain
         xcodebuild -allowProvisioningUpdates \
           -project . \
-          -scheme YourScheme \
+          -scheme TempProject \
           PRODUCT_BUNDLE_IDENTIFIER="${{ github.event.inputs.bundle_id }}" \
-          CODE_SIGN_STYLE="Automatic" || echo "Provisioning update completed"
+          CODE_SIGN_STYLE="Automatic" \
+          -destination 'generic/platform=iOS' \
+          -quiet || echo "Certificate creation triggered"
     
-    - name: Extract certificate as P12
+    - name: Extract certificate as P12 from login keychain
       run: |
-        # Find the development certificate
-        CERT_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | awk -F'"' '{print $2}')
+        # Look for certificates in the login keychain (where Xcode stores them)
+        echo "Searching for certificates in login keychain..."
+        security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db
+        
+        # Find the development certificate in login keychain
+        CERT_IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | grep "Apple Development" | head -1 | awk -F'"' '{print $2}')
         
         if [ -z "$CERT_IDENTITY" ]; then
-          echo "Error: No Apple Development certificate found"
-          # List all identities for debugging
+          echo "Trying alternative keychain path..."
+          # Try the older keychain path
+          security find-identity -v -p codesigning ~/Library/Keychains/login.keychain
+          CERT_IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain | grep "Apple Development" | head -1 | awk -F'"' '{print $2}')
+        fi
+        
+        if [ -z "$CERT_IDENTITY" ]; then
+          echo "Error: No Apple Development certificate found in login keychain"
+          echo "Available identities in all keychains:"
           security find-identity -v -p codesigning
           exit 1
         fi
         
-        # Export as P12 with password
-        security export -k build.keychain -t identities -f pkcs12 -P "exportpassword123" -o developer_certificate.p12 "$CERT_IDENTITY"
+        echo "Found certificate: $CERT_IDENTITY"
+        
+        # Export as P12 with password from login keychain
+        security export -k ~/Library/Keychains/login.keychain-db -t identities -f pkcs12 -P "exportpassword123" -o developer_certificate.p12 "$CERT_IDENTITY" || 
+        security export -k ~/Library/Keychains/login.keychain -t identities -f pkcs12 -P "exportpassword123" -o developer_certificate.p12 "$CERT_IDENTITY"
+        
         echo "Certificate exported as developer_certificate.p12"
     
     - name: Extract provisioning profile
@@ -64,6 +84,9 @@ jobs:
         # Find provisioning profiles and get the most recent one
         PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
         if [ -d "$PROFILES_DIR" ]; then
+          echo "Available provisioning profiles:"
+          ls -la "$PROFILES_DIR"/*.mobileprovision 2>/dev/null | head -10
+          
           PROFILE_PATH=$(ls -t "$PROFILES_DIR"/*.mobileprovision 2>/dev/null | head -1)
           
           if [ -n "$PROFILE_PATH" ]; then
@@ -82,7 +105,6 @@ jobs:
     - name: Create password file
       run: |
         echo "P12 Export Password: exportpassword123" > passwords.txt
-        echo "Keychain Password: temp123" >> passwords.txt
         echo "App-Specific Password: ${{ secrets.APP_SPECIFIC_PASSWORD }}" >> passwords.txt
     
     - name: Package artifacts
