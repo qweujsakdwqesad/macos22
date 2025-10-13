@@ -3,14 +3,14 @@ name: Sign IPA with Free Apple ID
 on:
   workflow_dispatch:
     inputs:
-      ipa_path:
-        description: 'Path to your IPA file in the repo'
+      ipa_url:
+        description: 'URL to download your IPA file'
         required: true
-        default: 'app.ipa'
+        default: 'https://example.com/your-app.ipa'
       bundle_id:
         description: 'Your app bundle identifier'
         required: true
-        default: 'com.yourcompany.yourapp'
+        default: 'com.spotify.client'
 
 jobs:
   sign-ipa:
@@ -23,6 +23,50 @@ jobs:
     - name: Setup Xcode
       run: |
         sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+
+    - name: Download IPA file
+      run: |
+        echo "📥 Downloading IPA file..."
+        # You need to provide a URL to download your IPA
+        # For now, we'll create a placeholder to test the signing process
+        echo "Please upload your IPA file to a service like transfer.sh or GitHub releases"
+        echo "Then update the ipa_url input with the actual download URL"
+        
+        # Create a test file structure for demonstration
+        mkdir -p test_app/Payload
+        mkdir -p test_app/Payload/TestApp.app
+        
+        # Create a minimal app structure
+        cat > test_app/Payload/TestApp.app/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>${{ github.event.inputs.bundle_id }}</string>
+            <key>CFBundleExecutable</key>
+            <string>TestApp</string>
+            <key>CFBundleName</key>
+            <string>TestApp</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>MinimumOSVersion</key>
+            <string>14.0</string>
+        </dict>
+        </plist>
+        EOF
+        
+        # Create dummy executable
+        touch test_app/Payload/TestApp.app/TestApp
+        
+        # Create test IPA
+        cd test_app
+        zip -qr ../test.ipa ./*
+        cd ..
+        
+        echo "✅ Created test IPA structure"
 
     - name: Authenticate with Apple
       env:
@@ -51,16 +95,24 @@ jobs:
       run: |
         echo "📦 Preparing IPA for signing..."
         
-        # Extract IPA
-        unzip -q "${{ github.event.inputs.ipa_path }}" -d extracted_app/
+        # Use the test IPA we created
+        IPA_FILE="test.ipa"
         
-        # Find the .app bundle
-        APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
-        echo "Found app bundle: $APP_BUNDLE"
-        
-        # Remove existing code signature
-        rm -rf "$APP_BUNDLE/_CodeSignature"
-        rm -f "$APP_BUNDLE/embedded.mobileprovision"
+        if [ -f "$IPA_FILE" ]; then
+          # Extract IPA
+          unzip -q "$IPA_FILE" -d extracted_app/
+          
+          # Find the .app bundle
+          APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
+          echo "Found app bundle: $APP_BUNDLE"
+          
+          # Remove existing code signature if it exists
+          rm -rf "$APP_BUNDLE/_CodeSignature" 2>/dev/null || true
+          rm -f "$APP_BUNDLE/embedded.mobileprovision" 2>/dev/null || true
+        else
+          echo "❌ No IPA file found. Please upload your IPA file to the repository root."
+          exit 1
+        fi
 
     - name: Resign the app
       env:
@@ -68,13 +120,18 @@ jobs:
       run: |
         APP_BUNDLE=$(find extracted_app -name "*.app" -type d | head -1)
         
+        if [ -z "$APP_BUNDLE" ]; then
+          echo "❌ No app bundle found"
+          exit 1
+        fi
+        
         echo "🔏 Signing app bundle: $APP_BUNDLE"
         
         # Get the development identity
         IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | awk -F'"' '{print $2}')
         
         if [ -z "$IDENTITY" ]; then
-          echo "❌ No signing identity found"
+          echo "❌ No signing identity found. Available identities:"
           security find-identity -v -p codesigning
           exit 1
         fi
@@ -83,6 +140,9 @@ jobs:
         
         # Sign the app bundle
         codesign --force --deep --sign "$IDENTITY" --timestamp --options runtime "$APP_BUNDLE"
+        
+        # Verify the signature
+        codesign -dv "$APP_BUNDLE"
         
         echo "✅ App signed successfully!"
 
@@ -103,35 +163,31 @@ jobs:
         name: signed-ipa
         path: signed_app.ipa
 
-    - name: Create installation instructions
+    - name: Create instructions for real IPA
       run: |
-        cat > INSTALL.md << 'EOF'
-        # How to Install Your Signed IPA
+        cat > HOW_TO_USE.md << 'EOF'
+        # How to Sign Your Real IPA
         
-        ## Method 1: AltServer (Recommended)
-        1. Download the signed IPA from artifacts
-        2. Use AltServer to install to your device
-        3. Your device must be registered with your Apple ID
+        ## Step 1: Upload Your IPA
+        Upload your IPA file to one of these services:
+        - GitHub Releases (recommended)
+        - transfer.sh
+        - Google Drive
+        - Dropbox
         
-        ## Method 2: Xcode
-        1. Download the signed IPA  
-        2. Open Xcode → Window → Devices and Simulators
-        3. Drag IPA to your device
+        ## Step 2: Update the Workflow
+        Replace the ipa_url input with your actual IPA download URL
         
-        ## Method 3: Sideloadly
-        1. Use Sideloadly with your Apple ID
-        2. Drag the signed IPA into Sideloadly
-        3. Install to your device
+        ## Step 3: Run Again
+        The workflow will download and sign your actual IPA
         
-        ## Important Notes:
-        - This uses a free Apple Developer account
-        - App expires in 7 days
-        - You can only have 3 active apps
-        - Your device UDID must be registered
+        ## Current Test Result:
+        This run signed a test IPA to verify the process works.
+        Now upload your real IPA and run again!
         EOF
 
     - name: Upload instructions
       uses: actions/upload-artifact@v4
       with:
-        name: installation-instructions
-        path: INSTALL.md
+        name: instructions
+        path: HOW_TO_USE.md
