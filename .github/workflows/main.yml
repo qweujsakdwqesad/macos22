@@ -3,6 +3,11 @@ name: Sign IPA with Apple ID
 on:
   workflow_dispatch:
     inputs:
+      sideloader_url:
+        description: "Enter the direct download URL of the sideloader-cli binary"
+        required: true
+        type: string
+        default: "https://github.com/Dadoum/Sideloader/releases/latest/download/sideloader-cli-x86_64-linux-gnu"
       ipa_url:
         description: "Enter the direct download URL of the unsigned IPA"
         required: true
@@ -20,8 +25,9 @@ jobs:
         run: |
           mkdir -p tools
           cd tools
-          wget https://github.com/Dadoum/Sideloader/releases/latest/download/sideloader-cli-x86_64-linux-gnu
-          chmod +x sideloader-cli-x86_64-linux-gnu
+          wget "${{ github.event.inputs.sideloader_url }}" -O sideloader-cli
+          chmod +x sideloader-cli
+          echo "✅ Downloaded Sideloader from ${{ github.event.inputs.sideloader_url }}"
 
       - name: Download unsigned IPA
         run: |
@@ -35,7 +41,7 @@ jobs:
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
         run: |
           cd tools
-          ./sideloader-cli-x86_64-linux-gnu sign ../ipa/unsigned.ipa \
+          ./sideloader-cli sign ../ipa/unsigned.ipa \
             --apple-id "$APPLE_ID" \
             --apple-password "$APP_SPECIFIC_PASSWORD" \
             --output ../ipa/signed.ipa \
