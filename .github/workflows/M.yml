@@ -15,7 +15,7 @@ sign_ipa:
 runs-on: macos-latest
 environment: deployment
 
-```
+
 steps:
   - name: Checkout repo
     uses: actions/checkout@v4
@@ -154,4 +154,4 @@ steps:
       echo "📦 Output: signed-ipa-artifact"
       echo "📍 File: signed.ipa"
       echo "=========================================="
-```
+
