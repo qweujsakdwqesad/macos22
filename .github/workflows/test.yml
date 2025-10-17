@@ -100,30 +100,33 @@ jobs:
           FASTLANE_USER: ${{ secrets.APPLE_ID }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION || '' }}
           CI: true
         run: |
           cd ~/work/ipa-signing
           
-          echo "🔐 Generating development certificate..."
+          echo "🔐 Attempting certificate generation..."
           
-          # Use fastlane sigh to auto-create certificate and provisioning profile
+          # Try fastlane sigh with verbose output
           fastlane sigh \
             --username "$FASTLANE_USER" \
             --app_identifier "${{ github.event.inputs.bundle_id }}" \
             --team_id "" \
             --development true \
-            --skip_certificate_verification false \
-            --skip_fetch_profiles false \
+            --skip_certificate_verification true \
+            --skip_fetch_profiles true \
             --force true \
             --output_path . \
-            || echo "⚠️  Fastlane sigh completed (cert may already exist)"
+            --verbose 2>&1 | tee fastlane.log || true
           
-          echo "✅ Certificate generation attempted"
+          echo ""
+          echo "⚠️  Note: If auth failed, will use ad-hoc signing instead"
+          echo "✅ Proceeding..."
           
           # List available signing identities
           echo ""
           echo "📋 Available identities:"
-          security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | grep -i apple || echo "No certs found yet"
+          security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | grep -i apple || echo "No Apple certs found, will use ad-hoc"
 
       - name: Import provisioning profiles
         run: |
