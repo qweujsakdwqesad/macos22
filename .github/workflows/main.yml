@@ -1,4 +1,4 @@
-name: Sign iOS IPA (Real Device Ready)
+name: Sign iOS IPA (Free Apple Developer)
 
 on:
   workflow_dispatch:
@@ -33,14 +33,13 @@ jobs:
           unzip ../app.ipa
           echo "✅ IPA extracted"
 
-      - name: Setup Fastlane authentication
+      - name: Setup Fastlane auth
         env:
           FASTLANE_USER: ${{ secrets.APPLE_ID }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
         run: |
-          echo "🔐 Authenticating with Apple..."
-          # This validates credentials and ensures they work non-interactively
-          fastlane spaceauth -u "$FASTLANE_USER" || echo "Auth session handled"
+          echo "🔐 Using Apple ID + App-Specific Password for free account..."
+          unset FASTLANE_SESSION  # clear cached session
 
       - name: Generate provisioning profile and sign
         env:
@@ -49,7 +48,7 @@ jobs:
         run: |
           cd extracted
           echo "🔧 Requesting provisioning profile from Apple..."
-          fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification
+          fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification --force
           echo "✅ Provisioning profile downloaded"
 
           PROFILE=$(ls *.mobileprovision | head -n 1)
