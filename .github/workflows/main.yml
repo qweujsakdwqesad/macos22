@@ -11,6 +11,10 @@ jobs:
   sign:
     runs-on: macos-latest
 
+    env:
+      FASTLANE_USER: ${{ secrets.APPLE_ID }}
+      FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,33 +37,30 @@ jobs:
           unzip ../app.ipa
           echo "✅ IPA extracted"
 
-      - name: Setup Fastlane auth
-        env:
-          FASTLANE_USER: ${{ secrets.APPLE_ID }}
-          FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
-        run: |
-          echo "🔐 Using Apple ID + App-Specific Password for free account..."
-          unset FASTLANE_SESSION  # clear cached session
-
-      - name: Generate provisioning profile and sign
-        env:
-          FASTLANE_USER: ${{ secrets.APPLE_ID }}
-          FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
+      - name: Prepare signing
         run: |
           cd extracted
-          echo "🔧 Requesting provisioning profile from Apple..."
+          unset FASTLANE_SESSION
+          echo "🔧 Preparing provisioning profile for free Apple account..."
+          # Force sigh to regenerate profile for free account
           fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification --force
-          echo "✅ Provisioning profile downloaded"
 
+          # Copy provisioning profile to standard location
           PROFILE=$(ls *.mobileprovision | head -n 1)
-          echo "Using profile: $PROFILE"
-
+          echo "Using provisioning profile: $PROFILE"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PROFILE" ~/Library/MobileDevice/Provisioning\ Profiles/
 
+      - name: Sign IPA
+        run: |
+          cd extracted
           APP_PATH=$(find Payload -name "*.app" | head -n 1)
-          echo "Signing $APP_PATH..."
+          echo "Signing app at $APP_PATH..."
+          # Auto-generate entitlements from Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
+          # Signing with Apple Development certificate
           codesign -f -s "Apple Development" --entitlements entitlements.plist "$APP_PATH"
+          echo "✅ App signed successfully"
 
       - name: Repackage Signed IPA
         run: |
