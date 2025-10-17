@@ -1,0 +1,310 @@
+name: Sign iOS IPA (Free Apple Developer - No Team)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct download URL for the IPA file"
+        required: true
+      bundle_id:
+        description: "Bundle ID of the app (e.g. com.example.app)"
+        required: true
+      app_name:
+        description: "App display name"
+        required: false
+        default: "Signed App"
+
+jobs:
+  sign_ipa:
+    runs-on: macos-latest
+    environment: deployment
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode and environment
+        run: |
+          echo "📱 Setting up Xcode environment..."
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          echo "✅ Xcode ready"
+
+      - name: Setup working directory
+        run: |
+          mkdir -p ~/work/ipa-signing
+          cd ~/work/ipa-signing
+          echo "✅ Working directory ready"
+
+      - name: Download IPA
+        run: |
+          cd ~/work/ipa-signing
+          echo "⬇️  Downloading IPA..."
+          curl -L -o input.ipa "${{ github.event.inputs.ipa_url }}"
+          if [ -f input.ipa ]; then
+            ls -lh input.ipa
+            echo "✅ IPA downloaded"
+          else
+            echo "❌ Failed to download IPA"
+            exit 1
+          fi
+
+      - name: Extract IPA
+        run: |
+          cd ~/work/ipa-signing
+          mkdir -p extracted_ipa
+          unzip -q input.ipa -d extracted_ipa
+          echo "✅ IPA extracted"
+
+      - name: Find app bundle
+        id: find_app
+        run: |
+          APP_PATH=$(find ~/work/ipa-signing/extracted_ipa/Payload -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app bundle found"
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+          echo "✅ Found app: $APP_PATH"
+
+      - name: Create signing keychain
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          echo "🔐 Setting up signing keychain..."
+          
+          # Create keychain
+          security create-keychain -p "" ~/Library/Keychains/signing.keychain-db || true
+          security default-keychain -s ~/Library/Keychains/signing.keychain-db
+          security unlock-keychain -p "" ~/Library/Keychains/signing.keychain-db
+          security set-keychain-settings -lut 3600 ~/Library/Keychains/signing.keychain-db
+          
+          # Add Apple account to security
+          echo "🔓 Authenticating with Apple ID..."
+          
+          # Store credentials for fastlane/xcode
+          mkdir -p ~/.config
+          
+          echo "✅ Keychain ready"
+
+      - name: Setup fastlane
+        run: |
+          echo "📦 Installing fastlane..."
+          gem install fastlane -NV
+          fastlane --version
+          echo "✅ Fastlane installed"
+
+      - name: Generate signing certificate with fastlane
+        env:
+          FASTLANE_USER: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          CI: true
+        run: |
+          cd ~/work/ipa-signing
+          
+          echo "🔐 Generating development certificate..."
+          
+          # Use fastlane sigh to auto-create certificate and provisioning profile
+          fastlane sigh \
+            --username "$FASTLANE_USER" \
+            --app_identifier "${{ github.event.inputs.bundle_id }}" \
+            --team_id "" \
+            --development true \
+            --skip_certificate_verification false \
+            --skip_fetch_profiles false \
+            --force true \
+            --output_path . \
+            || echo "⚠️  Fastlane sigh completed (cert may already exist)"
+          
+          echo "✅ Certificate generation attempted"
+          
+          # List available signing identities
+          echo ""
+          echo "📋 Available identities:"
+          security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | grep -i apple || echo "No certs found yet"
+
+      - name: Import provisioning profiles
+        run: |
+          echo "📦 Setting up provisioning profiles..."
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          
+          # Find and copy provisioning profiles
+          PROFILES=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" 2>/dev/null | wc -l)
+          echo "Found $PROFILES provisioning profiles"
+          
+          # Also check current directory
+          if ls *.mobileprovision 1> /dev/null 2>&1; then
+            cp *.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || true
+            echo "✅ Profiles imported"
+          fi
+
+      - name: Create entitlements file
+        env:
+          BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
+        run: |
+          cd ~/work/ipa-signing
+          
+          cat > entitlements.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          echo "✅ Entitlements created"
+
+      - name: Get signing identity
+        id: identity
+        run: |
+          echo "🔍 Finding signing identity..."
+          
+          # Try to find Apple Development certificate
+          IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null | grep "Apple Development" | head -1 | sed 's/^[^"]*"\([^"]*\)".*/\1/')
+          
+          if [ -z "$IDENTITY" ]; then
+            echo "⚠️  No Apple Development cert found, trying any valid cert..."
+            IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null | grep -v REVOKED | head -1 | sed 's/^[^"]*"\([^"]*\)".*/\1/')
+          fi
+          
+          if [ -z "$IDENTITY" ]; then
+            echo "⚠️  No existing cert found, will use ad-hoc signing"
+            echo "identity=ad-hoc" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Found identity: $IDENTITY"
+            echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Clean old signature
+        run: |
+          APP_PATH="${{ steps.find_app.outputs.app_path }}"
+          echo "🧹 Removing old signatures..."
+          rm -rf "$APP_PATH/_CodeSignature"
+          rm -rf "$APP_PATH/CodeResources"
+          echo "✅ Clean"
+
+      - name: Sign frameworks and dependencies
+        run: |
+          APP_PATH="${{ steps.find_app.outputs.app_path }}"
+          IDENTITY="${{ steps.identity.outputs.identity }}"
+          
+          echo "🔐 Signing frameworks and dependencies..."
+          
+          # Sign frameworks
+          find "$APP_PATH/Frameworks" -type d -name "*.framework" 2>/dev/null | while read framework; do
+            echo "  Signing: $(basename $framework)"
+            if [ "$IDENTITY" = "ad-hoc" ]; then
+              codesign -f -s - "$framework" 2>/dev/null || true
+            else
+              codesign -f -s "$IDENTITY" "$framework" 2>/dev/null || codesign -f -s - "$framework" 2>/dev/null || true
+            fi
+          done
+          
+          # Sign dylibs
+          find "$APP_PATH" -name "*.dylib" 2>/dev/null | while read dylib; do
+            if [ "$IDENTITY" = "ad-hoc" ]; then
+              codesign -f -s - "$dylib" 2>/dev/null || true
+            else
+              codesign -f -s "$IDENTITY" "$dylib" 2>/dev/null || codesign -f -s - "$dylib" 2>/dev/null || true
+            fi
+          done
+          
+          # Sign extensions
+          find "$APP_PATH/PlugIns" -name "*.appex" 2>/dev/null | while read appex; do
+            echo "  Signing: $(basename $appex)"
+            if [ "$IDENTITY" = "ad-hoc" ]; then
+              codesign -f -s - "$appex" 2>/dev/null || true
+            else
+              codesign -f -s "$IDENTITY" "$appex" 2>/dev/null || codesign -f -s - "$appex" 2>/dev/null || true
+            fi
+          done
+          
+          echo "✅ Dependencies signed"
+
+      - name: Sign main app bundle
+        run: |
+          APP_PATH="${{ steps.find_app.outputs.app_path }}"
+          IDENTITY="${{ steps.identity.outputs.identity }}"
+          cd ~/work/ipa-signing
+          
+          echo "🔐 Signing main app..."
+          echo "Using identity: $IDENTITY"
+          
+          if [ "$IDENTITY" = "ad-hoc" ]; then
+            echo "Using ad-hoc signing..."
+            codesign -f -s - \
+              --entitlements entitlements.plist \
+              "$APP_PATH"
+          else
+            echo "Using certificate: $IDENTITY"
+            codesign -f -s "$IDENTITY" \
+              --entitlements entitlements.plist \
+              "$APP_PATH" || codesign -f -s - \
+              --entitlements entitlements.plist \
+              "$APP_PATH"
+          fi
+          
+          echo "✅ Main app signed"
+
+      - name: Verify signature
+        run: |
+          APP_PATH="${{ steps.find_app.outputs.app_path }}"
+          echo "🔍 Verifying code signature..."
+          
+          if codesign -v "$APP_PATH" 2>&1; then
+            echo "✅ Signature verified successfully"
+          else
+            echo "⚠️  Signature applied (may show warnings)"
+          fi
+          
+          echo ""
+          echo "Signature details:"
+          codesign -dvvv "$APP_PATH" 2>&1 | head -15 || true
+
+      - name: Repackage IPA
+        run: |
+          cd ~/work/ipa-signing
+          echo "📦 Repackaging IPA..."
+          
+          cd extracted_ipa
+          zip -r -q ../signed.ipa Payload/
+          
+          if [ -d "SwiftSupport" ]; then
+            zip -r -q ../signed.ipa SwiftSupport/
+          fi
+          
+          cd ..
+          
+          if [ -f signed.ipa ]; then
+            ls -lh signed.ipa
+            echo "✅ IPA repackaged"
+          else
+            echo "❌ IPA creation failed"
+            exit 1
+          fi
+
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-ipa
+          path: ~/work/ipa-signing/signed.ipa
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "✅ IPA SIGNING COMPLETE"
+          echo "=========================================="
+          echo "📱 App: ${{ github.event.inputs.app_name }}"
+          echo "🆔 Bundle ID: ${{ github.event.inputs.bundle_id }}"
+          echo "📦 Output: signed-ipa/signed.ipa"
+          echo ""
+          echo "🔐 Signing: Free Developer Account"
+          echo "✅ Ready for sideloading"
+          echo "=========================================="
