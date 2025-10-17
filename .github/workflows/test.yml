@@ -210,27 +210,26 @@ jobs:
           openssl req -new -x509 -key dev_key.pem -out dev_cert.pem -days 365 \
             -subj "/C=US/ST=State/L=City/O=Developer/CN=Development" 2>/dev/null
           
-          # Convert to DER
-          openssl x509 -outform der -in dev_cert.pem -out dev_cert.cer 2>/dev/null
-          
-          # Create PKCS12
+          # Create PKCS12 with empty password
           openssl pkcs12 -export -out dev_cert.p12 -inkey dev_key.pem \
-            -in dev_cert.pem -password pass: 2>/dev/null
+            -in dev_cert.pem -password pass: -nodes 2>/dev/null
           
-          # Import into keychain WITHOUT prompting
-          security import dev_cert.cer -k ~/Library/Keychains/signing.keychain-db \
-            -t cert -f pkcs12 2>/dev/null || true
-          
+          # Import PKCS12 into keychain with verbose output
+          echo "Importing certificate..."
           security import dev_cert.p12 -k ~/Library/Keychains/signing.keychain-db \
-            -P "" -t cert -f pkcs12 -A 2>/dev/null || true
+            -P "" -f pkcs12 -A -T /usr/bin/codesign -T /usr/bin/security
           
-          # Set partition list to allow codesign
+          # Set partition list
           security set-key-partition-list -S apple-tool:,apple: -k "" \
             ~/Library/Keychains/signing.keychain-db 2>/dev/null || true
           
-          rm -f dev_key.pem dev_cert.pem dev_cert.cer dev_cert.p12
+          # Verify import
+          echo "Verifying import..."
+          security find-identity -v -p codesigning ~/Library/Keychains/signing.keychain-db || echo "Warning: Could not list identities"
           
-          echo "✅ Certificate generated and imported"
+          rm -f dev_key.pem dev_cert.pem dev_cert.p12
+          
+          echo "✅ Certificate imported"
 
       - name: Find signing identity
         id: identity
