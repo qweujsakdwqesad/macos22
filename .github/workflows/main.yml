@@ -6,14 +6,16 @@ on:
       ipa_url:
         description: "Direct download URL for the IPA to sign"
         required: true
+      apple_id:
+        description: "Your Apple ID"
+        required: true
+      app_specific_password:
+        description: "Your App-Specific Password"
+        required: true
 
 jobs:
   sign:
     runs-on: macos-latest
-
-    env:
-      FASTLANE_USER: ${{ secrets.APPLE_ID }}
-      FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
 
     steps:
       - name: Checkout repository
@@ -42,10 +44,8 @@ jobs:
           cd extracted
           unset FASTLANE_SESSION
           echo "🔧 Preparing provisioning profile for free Apple account..."
-          # Force sigh to regenerate profile for free account
-          fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification --force
+          fastlane sigh --username "${{ github.event.inputs.apple_id }}" --adhoc true --skip_certificate_verification --force
 
-          # Copy provisioning profile to standard location
           PROFILE=$(ls *.mobileprovision | head -n 1)
           echo "Using provisioning profile: $PROFILE"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
@@ -56,9 +56,6 @@ jobs:
           cd extracted
           APP_PATH=$(find Payload -name "*.app" | head -n 1)
           echo "Signing app at $APP_PATH..."
-          # Auto-generate entitlements from Info.plist
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
-          # Signing with Apple Development certificate
           codesign -f -s "Apple Development" --entitlements entitlements.plist "$APP_PATH"
           echo "✅ App signed successfully"
 
