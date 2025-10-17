@@ -43,13 +43,13 @@ jobs:
           // Empty placeholder project
           EOF
 
-      - name: Setup Fastlane match for signing
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASS: ${{ secrets.APPLE_PASS }}
-        run: |
-          echo "🔐 Authenticating with Apple..."
-          fastlane spaceauth -u "$APPLE_ID" || echo "Fastlane auth handled"
+     - name: Setup Fastlane auth
+  env:
+    FASTLANE_USER: ${{ secrets.APPLE_ID }}
+    FASTLANE_PASSWORD: ${{ secrets.APPLE_PASS }}
+  run: |
+    echo "🔐 Authenticating with Apple..."
+    fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification
 
       - name: Generate provisioning profile and sign
         env:
