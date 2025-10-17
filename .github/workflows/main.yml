@@ -3,14 +3,14 @@ name: Sign iOS IPA
 on:
   workflow_dispatch:
     inputs:
-      ipa_path:
-        description: "Path to the unsigned IPA file"
+      ipa_url:
+        description: "Direct download URL for the IPA to sign"
         required: true
-        default: "MyApp.ipa"
 
 jobs:
   sign:
     runs-on: macos-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,23 +20,34 @@ jobs:
           xcode-select --install || true
           echo "✅ Xcode command line tools available"
 
-      - name: Setup Apple ID
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASS: ${{ secrets.APPLE_PASS }}
+      - name: Download IPA
         run: |
-          echo "Logging into Xcode..."
-          xcrun altool --authenticate-app -u "$APPLE_ID" -p "$APPLE_PASS" || echo "Will sign manually"
+          echo "Downloading IPA from provided URL..."
+          curl -L -o app.ipa "${{ github.event.inputs.ipa_url }}"
+          ls -lh app.ipa
 
       - name: Extract IPA
         run: |
           mkdir extracted
           cd extracted
-          unzip ../${{ github.event.inputs.ipa_path }}
+          unzip ../app.ipa
+
+      # Optional: Import your own signing certificate (.p12)
+      - name: Import signing certificate (optional)
+        if: env.P12_BASE64 != ''
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > certificate.p12
+          security create-keychain -p temp build.keychain
+          security import certificate.p12 -k ~/Library/Keychains/build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s ~/Library/Keychains/build.keychain
+          echo "✅ Certificate imported successfully"
 
       - name: Find signing identity
         run: |
-          security find-identity -v -p codesigning || echo "No signing identity found yet"
+          security find-identity -v -p codesigning || echo "⚠️ No signing identity found yet"
 
       - name: Sign the app
         env:
@@ -47,7 +58,7 @@ jobs:
           codesign --force --sign "$APPLE_IDENTITY" Payload/*.app
           cd ..
 
-      - name: Repackage IPA
+      - name: Repackage signed IPA
         run: |
           cd extracted
           zip -r ../signed-app.ipa Payload/
