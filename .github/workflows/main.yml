@@ -1,54 +1,60 @@
-name: Sign IPA with Apple ID
+name: Sign iOS IPA
 
 on:
   workflow_dispatch:
     inputs:
-      sideloader_url:
-        description: "Enter the direct download URL of the sideloader-cli binary"
+      ipa_path:
+        description: "Path to the unsigned IPA file"
         required: true
-        type: string
-        default: "https://github.com/Dadoum/Sideloader/releases/latest/download/sideloader-cli-x86_64-linux-gnu"
-      ipa_url:
-        description: "Enter the direct download URL of the unsigned IPA"
-        required: true
-        type: string
+        default: "MyApp.ipa"
 
 jobs:
-  sign_ipa:
-    runs-on: ubuntu-latest
-
+  sign:
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Sideloader CLI
+      - name: Install required tools
         run: |
-          mkdir -p tools
-          cd tools
-          wget "${{ github.event.inputs.sideloader_url }}" -O sideloader-cli
-          chmod +x sideloader-cli
-          echo "✅ Downloaded Sideloader from ${{ github.event.inputs.sideloader_url }}"
+          xcode-select --install || true
+          echo "✅ Xcode command line tools available"
 
-      - name: Download unsigned IPA
-        run: |
-          mkdir -p ipa
-          wget "${{ github.event.inputs.ipa_url }}" -O ipa/unsigned.ipa
-          echo "✅ Downloaded IPA from ${{ github.event.inputs.ipa_url }}"
-
-      - name: Sign IPA using Apple ID + App-Specific Password
+      - name: Setup Apple ID
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_PASS: ${{ secrets.APPLE_PASS }}
         run: |
-          cd tools
-          ./sideloader-cli sign ../ipa/unsigned.ipa \
-            --apple-id "$APPLE_ID" \
-            --apple-password "$APP_SPECIFIC_PASSWORD" \
-            --output ../ipa/signed.ipa \
-            --debug
+          echo "Logging into Xcode..."
+          xcrun altool --authenticate-app -u "$APPLE_ID" -p "$APPLE_PASS" || echo "Will sign manually"
 
-      - name: Upload signed IPA as artifact
+      - name: Extract IPA
+        run: |
+          mkdir extracted
+          cd extracted
+          unzip ../${{ github.event.inputs.ipa_path }}
+
+      - name: Find signing identity
+        run: |
+          security find-identity -v -p codesigning || echo "No signing identity found yet"
+
+      - name: Sign the app
+        env:
+          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+        run: |
+          cd extracted
+          echo "Signing using identity: $APPLE_IDENTITY"
+          codesign --force --sign "$APPLE_IDENTITY" Payload/*.app
+          cd ..
+
+      - name: Repackage IPA
+        run: |
+          cd extracted
+          zip -r ../signed-app.ipa Payload/
+          cd ..
+
+      - name: Upload signed IPA
         uses: actions/upload-artifact@v4
         with:
           name: signed-ipa
-          path: ipa/signed.ipa
+          path: signed-app.ipa
