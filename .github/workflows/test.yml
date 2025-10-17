@@ -114,11 +114,11 @@ jobs:
           # Create a self-signed certificate for development signing
           # This will work for ad-hoc distribution on free accounts
           openssl x509 -req -days 365 -in request.csr \
-            -signkey private.key -out certificate.crt
+            -signkey private.key -out certificate.crt -extfile /dev/null
           
           # Convert to P12 format
           openssl pkcs12 -export -out development.p12 -inkey private.key \
-            -in certificate.crt -passout pass:
+            -in certificate.crt -password pass:
           
           # Import into keychain
           security import development.p12 -A -t cert -f pkcs12 \
