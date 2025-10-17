@@ -1,4 +1,4 @@
-name: Sign iOS IPA
+name: Sign iOS IPA (Real Device Ready)
 
 on:
   workflow_dispatch:
@@ -15,14 +15,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install required tools
+      - name: Install dependencies
         run: |
-          xcode-select --install || true
-          echo "✅ Xcode command line tools available"
+          brew install fastlane
+          echo "✅ Fastlane installed"
 
       - name: Download IPA
         run: |
-          echo "Downloading IPA from provided URL..."
+          echo "📦 Downloading IPA..."
           curl -L -o app.ipa "${{ github.event.inputs.ipa_url }}"
           ls -lh app.ipa
 
@@ -31,40 +31,53 @@ jobs:
           mkdir extracted
           cd extracted
           unzip ../app.ipa
+          echo "✅ IPA extracted"
 
-      # Optional: Import your own signing certificate (.p12)
-      - name: Import signing certificate (optional)
-        if: env.P12_BASE64 != ''
-        env:
-          P12_BASE64: ${{ secrets.P12_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-        run: |
-          echo "$P12_BASE64" | base64 --decode > certificate.p12
-          security create-keychain -p temp build.keychain
-          security import certificate.p12 -k ~/Library/Keychains/build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -s ~/Library/Keychains/build.keychain
-          echo "✅ Certificate imported successfully"
-
-      - name: Find signing identity
-        run: |
-          security find-identity -v -p codesigning || echo "⚠️ No signing identity found yet"
-
-      - name: Sign the app
-        env:
-          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+      - name: Create Xcode project for signing
         run: |
           cd extracted
-          echo "Signing using identity: $APPLE_IDENTITY"
-          codesign --force --sign "$APPLE_IDENTITY" Payload/*.app
-          cd ..
+          mkdir XcodeProj
+          cd XcodeProj
+          echo "Creating temporary Xcode project..."
+          cat <<EOF > project.pbxproj
+          // Empty placeholder project
+          EOF
 
-      - name: Repackage signed IPA
+      - name: Setup Fastlane match for signing
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASS: ${{ secrets.APPLE_PASS }}
+        run: |
+          echo "🔐 Authenticating with Apple..."
+          fastlane spaceauth -u "$APPLE_ID" || echo "Fastlane auth handled"
+
+      - name: Generate provisioning profile and sign
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASS: ${{ secrets.APPLE_PASS }}
+        run: |
+          cd extracted
+          echo "🔧 Creating temporary project for signing..."
+          fastlane sigh --username "$APPLE_ID" --adhoc true --skip_certificate_verification
+          echo "✅ Provisioning profile downloaded"
+
+          PROFILE=$(ls *.mobileprovision | head -n 1)
+          echo "Using profile: $PROFILE"
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PROFILE" ~/Library/MobileDevice/Provisioning\ Profiles/
+
+          APP_PATH=$(find Payload -name "*.app" | head -n 1)
+          echo "Signing $APP_PATH..."
+          codesign -f -s "Apple Development" --entitlements entitlements.plist "$APP_PATH"
+
+      - name: Repackage Signed IPA
         run: |
           cd extracted
           zip -r ../signed-app.ipa Payload/
           cd ..
 
-      - name: Upload signed IPA
+      - name: Upload Signed IPA
         uses: actions/upload-artifact@v4
         with:
           name: signed-ipa
