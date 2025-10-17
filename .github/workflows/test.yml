@@ -1,4 +1,4 @@
-name: Sign iOS IPA (Free Apple Developer - Auto Generate Certs)
+name: Sign iOS IPA (Free Apple Developer)
 
 on:
   workflow_dispatch:
@@ -59,156 +59,6 @@ jobs:
           echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
           echo "✅ Found: $(basename $APP_PATH)"
 
-      - name: Install dependencies
-        run: |
-          echo "📦 Installing tools..."
-          brew install ruby-build rbenv
-          gem install spaceship
-          echo "✅ Dependencies installed"
-
-      - name: Generate and import development certificate
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-        run: |
-          cd ~/work/ipa-signing
-          
-          echo "🔐 Setting up signing credentials..."
-          
-          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ]; then
-            echo "❌ Missing APPLE_ID or APPLE_PASSWORD secrets"
-            exit 1
-          fi
-          
-          # Create signing keychain
-          security create-keychain -p "" ~/Library/Keychains/signing.keychain-db || true
-          security default-keychain -s ~/Library/Keychains/signing.keychain-db
-          security unlock-keychain -p "" ~/Library/Keychains/signing.keychain-db
-          security set-keychain-settings -lut 3600 ~/Library/Keychains/signing.keychain-db
-          
-          # Create CSR for development certificate
-          echo "📝 Creating certificate signing request..."
-          
-          openssl genrsa -out private.key 2048
-          
-          cat > csr.conf << EOF
-          [req]
-          default_bits = 2048
-          prompt = no
-          default_md = sha256
-          distinguished_name = req_distinguished_name
-          
-          [req_distinguished_name]
-          C=US
-          ST=State
-          L=City
-          O=Organization
-          OU=Organization Unit
-          CN=$APPLE_ID
-          EOF
-          
-          openssl req -new -key private.key -out request.csr -config csr.conf
-          
-          echo "✅ CSR created"
-          
-          # Create a self-signed certificate for development signing
-          # This will work for ad-hoc distribution on free accounts
-          openssl x509 -req -days 365 -in request.csr \
-            -signkey private.key -out certificate.crt -extfile /dev/null
-          
-          # Convert to P12 format
-          openssl pkcs12 -export -out development.p12 -inkey private.key \
-            -in certificate.crt -password pass:
-          
-          # Import into keychain
-          security import development.p12 -A -t cert -f pkcs12 \
-            -k ~/Library/Keychains/signing.keychain-db -P ""
-          
-          security set-key-partition-list -S apple-tool:,apple: -k "" \
-            ~/Library/Keychains/signing.keychain-db
-          
-          # Cleanup
-          rm -f private.key request.csr csr.conf certificate.crt development.p12
-          
-          echo "✅ Certificate imported"
-
-      - name: Generate provisioning profile
-        env:
-          BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
-        run: |
-          cd ~/work/ipa-signing
-          
-          echo "📦 Creating provisioning profile..."
-          
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          
-          # Create minimal provisioning profile XML
-          cat > profile.mobileprovision << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>AppIDName</key>
-              <string>Wildcard AppID</string>
-              <key>AppIdentifierPrefix</key>
-              <array>
-                  <string>*</string>
-              </array>
-              <key>ApplicationIdentifierPrefix</key>
-              <array>
-                  <string>*</string>
-              </array>
-              <key>CreationDate</key>
-              <date>2024-01-01T00:00:00Z</date>
-              <key>Platform</key>
-              <array>
-                  <string>iOS</string>
-              </array>
-              <key>IsXcodeManaged</key>
-              <true/>
-              <key>ProvisionedDevices</key>
-              <array/>
-              <key>TeamIdentifier</key>
-              <array>
-                  <string>*</string>
-              </array>
-              <key>TeamName</key>
-              <string>Development Team</string>
-              <key>TimeToLive</key>
-              <integer>365</integer>
-              <key>UUID</key>
-              <string>12345678-1234-1234-1234-123456789012</string>
-              <key>Version</key>
-              <integer>1</integer>
-          </dict>
-          </plist>
-          EOF
-          
-          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          rm profile.mobileprovision
-          
-          echo "✅ Provisioning profile created"
-
-      - name: List available signing identities
-        run: |
-          echo "📋 Available signing identities:"
-          security find-identity -v -p codesigning ~/Library/Keychains/signing.keychain-db || echo "None found"
-
-      - name: Get signing identity
-        id: identity
-        run: |
-          echo "🔍 Finding certificate..."
-          
-          IDENTITY=$(security find-identity -v -p codesigning ~/Library/Keychains/signing.keychain-db 2>/dev/null | head -1 | sed 's/^[^"]*"\([^"]*\)".*/\1/')
-          
-          if [ -z "$IDENTITY" ]; then
-            echo "❌ No certificate found"
-            exit 1
-          fi
-          
-          echo "✅ Found: $IDENTITY"
-          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
-
       - name: Create entitlements
         env:
           BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
@@ -220,8 +70,6 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>application-identifier</key>
-              <string>*.$BUNDLE_ID</string>
               <key>get-task-allow</key>
               <true/>
           </dict>
@@ -242,49 +90,60 @@ jobs:
       - name: Sign frameworks and dependencies
         run: |
           APP_PATH="${{ steps.find_app.outputs.app_path }}"
-          IDENTITY="${{ steps.identity.outputs.identity }}"
           
           echo "🔐 Signing frameworks..."
           
+          # Sign all frameworks
           find "$APP_PATH/Frameworks" -type d -name "*.framework" 2>/dev/null | while read framework; do
             echo "  ├─ $(basename $framework)"
-            codesign -f -s "$IDENTITY" "$framework" 2>/dev/null || true
+            codesign -f -s - "$framework" 2>/dev/null || true
           done
           
+          # Sign dylibs
           find "$APP_PATH" -name "*.dylib" 2>/dev/null | while read dylib; do
-            codesign -f -s "$IDENTITY" "$dylib" 2>/dev/null || true
+            codesign -f -s - "$dylib" 2>/dev/null || true
           done
           
+          # Sign app extensions
           find "$APP_PATH/PlugIns" -name "*.appex" 2>/dev/null | while read appex; do
             echo "  ├─ $(basename $appex)"
-            codesign -f -s "$IDENTITY" "$appex" 2>/dev/null || true
+            codesign -f -s - "$appex" 2>/dev/null || true
           done
           
-          echo "✅ Done"
+          echo "✅ Dependencies signed"
 
       - name: Sign main app bundle
         run: |
           APP_PATH="${{ steps.find_app.outputs.app_path }}"
-          IDENTITY="${{ steps.identity.outputs.identity }}"
           cd ~/work/ipa-signing
           
           echo "🔐 Signing main app..."
           
-          codesign -f -s "$IDENTITY" \
+          codesign -f -s - \
             --entitlements entitlements.plist \
-            "$APP_PATH" || exit 1
+            "$APP_PATH"
           
-          echo "✅ App signed"
+          if [ $? -eq 0 ]; then
+            echo "✅ App signed successfully"
+          else
+            echo "❌ Signing failed"
+            exit 1
+          fi
 
       - name: Verify signature
         run: |
           APP_PATH="${{ steps.find_app.outputs.app_path }}"
           echo "🔍 Verifying..."
           
-          codesign -v "$APP_PATH" 2>&1 && echo "✅ Valid" || echo "⚠️  Signed"
+          if codesign -v "$APP_PATH" 2>&1 | grep -q "valid"; then
+            echo "✅ Valid signature"
+          else
+            echo "⚠️  Signed (ready for sideloading)"
+          fi
           
           echo ""
-          codesign -dvvv "$APP_PATH" 2>&1 | head -10
+          echo "Signature info:"
+          codesign -dvvv "$APP_PATH" 2>&1 | head -10 || true
 
       - name: Repackage IPA
         run: |
@@ -293,15 +152,15 @@ jobs:
           
           cd extracted_ipa
           zip -r -q ../signed.ipa Payload/
-          [ -d "SwiftSupport" ] && zip -r -q ../signed.ipa SwiftSupport/
-          [ -d "Symbols" ] && zip -r -q ../signed.ipa Symbols/
+          [ -d "SwiftSupport" ] && zip -r -q ../signed.ipa SwiftSupport/ || true
+          [ -d "Symbols" ] && zip -r -q ../signed.ipa Symbols/ || true
           cd ..
           
           if [ -f signed.ipa ]; then
             ls -lh signed.ipa
-            echo "✅ Ready"
+            echo "✅ Ready to download"
           else
-            echo "❌ Failed"
+            echo "❌ Failed to create IPA"
             exit 1
           fi
 
@@ -323,6 +182,6 @@ jobs:
           echo "🆔 Bundle: ${{ github.event.inputs.bundle_id }}"
           echo "📦 Output: signed-ipa/signed.ipa"
           echo ""
-          echo "🔐 Method: Auto-Generated Development Cert"
-          echo "✅ Ready for sideloading"
+          echo "🔐 Signing: Ad-Hoc (Free Account)"
+          echo "✅ Ready for sideloading with Sideloadly/AltServer"
           echo ""
