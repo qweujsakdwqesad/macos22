@@ -6,22 +6,19 @@ on:
       ipa_url:
         description: "Direct download URL for the IPA to sign"
         required: true
-      apple_id:
-        description: "Your Apple ID"
-        required: true
-      app_specific_password:
-        description: "Your App-Specific Password"
-        required: true
 
 jobs:
   sign:
     runs-on: macos-latest
+    env:
+      FASTLANE_USER: ${{ secrets.APPLE_ID }}
+      FASTLANE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Fastlane
         run: |
           brew install fastlane
           echo "✅ Fastlane installed"
@@ -35,36 +32,35 @@ jobs:
       - name: Extract IPA
         run: |
           mkdir extracted
-          cd extracted
-          unzip ../app.ipa
+          unzip app.ipa -d extracted
           echo "✅ IPA extracted"
 
-      - name: Prepare signing
+      - name: Prepare signing environment
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - name: Sign IPA using Fastlane (Free Apple Account)
         run: |
           cd extracted
+          echo "🔧 Signing IPA..."
           unset FASTLANE_SESSION
-          echo "🔧 Preparing provisioning profile for free Apple account..."
-          fastlane sigh --username "${{ github.event.inputs.apple_id }}" --adhoc true --skip_certificate_verification --force
+          fastlane sigh --username "$FASTLANE_USER" --adhoc true --skip_certificate_verification --force
 
+          # Copy the first downloaded provisioning profile
           PROFILE=$(ls *.mobileprovision | head -n 1)
-          echo "Using provisioning profile: $PROFILE"
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PROFILE" ~/Library/MobileDevice/Provisioning\ Profiles/
 
-      - name: Sign IPA
-        run: |
-          cd extracted
+          # Find the .app inside Payload
           APP_PATH=$(find Payload -name "*.app" | head -n 1)
           echo "Signing app at $APP_PATH..."
           codesign -f -s "Apple Development" --entitlements entitlements.plist "$APP_PATH"
-          echo "✅ App signed successfully"
 
       - name: Repackage Signed IPA
         run: |
           cd extracted
           zip -r ../signed-app.ipa Payload/
           cd ..
-          echo "📦 Signed IPA repackaged successfully"
+          echo "✅ Signed IPA repackaged"
 
       - name: Upload Signed IPA
         uses: actions/upload-artifact@v4
