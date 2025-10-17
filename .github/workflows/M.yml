@@ -1,157 +1,155 @@
 name: Sign iOS IPA (Free Apple Developer)
 
 on:
-workflow_dispatch:
-inputs:
-ipa_url:
-description: “Direct download URL for the IPA file”
-required: true
-team_id:
-description: “Apple Team ID (optional for free account)”
-required: false
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct download URL for the IPA file"
+        required: true
+      team_id:
+        description: "Apple Team ID (optional for free account)"
+        required: false
 
 jobs:
-sign_ipa:
-runs-on: macos-latest
-environment: deployment
+  sign_ipa:
+    runs-on: macos-latest
+    environment: deployment
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
+      - name: Setup environment
+        run: |
+          mkdir -p ~/work/ipa-signing
+          cd ~/work/ipa-signing
+          echo "Working directory set up"
 
-steps:
-  - name: Checkout repo
-    uses: actions/checkout@v4
+      - name: Download IPA file
+        run: |
+          cd ~/work/ipa-signing
+          echo "⬇️  Downloading IPA from: ${{ github.event.inputs.ipa_url }}"
+          curl -L -o input.ipa "${{ github.event.inputs.ipa_url }}"
+          if [ -f input.ipa ]; then
+            ls -lh input.ipa
+            echo "✅ Download successful"
+          else
+            echo "❌ Failed to download IPA"
+            exit 1
+          fi
 
-  - name: Setup environment
-    run: |
-      mkdir -p ~/work/ipa-signing
-      cd ~/work/ipa-signing
-      echo "Working directory set up"
+      - name: Extract IPA contents
+        run: |
+          cd ~/work/ipa-signing
+          mkdir -p extracted_ipa
+          unzip -q input.ipa -d extracted_ipa
+          echo "✅ IPA extracted successfully"
+          ls -la extracted_ipa/
 
-  - name: Download IPA file
-    run: |
-      cd ~/work/ipa-signing
-      echo "⬇️  Downloading IPA from: ${{ github.event.inputs.ipa_url }}"
-      curl -L -o input.ipa "${{ github.event.inputs.ipa_url }}"
-      if [ -f input.ipa ]; then
-        ls -lh input.ipa
-        echo "✅ Download successful"
-      else
-        echo "❌ Failed to download IPA"
-        exit 1
-      fi
+      - name: Find app bundle
+        id: find_app
+        run: |
+          APP_PATH=$(find ~/work/ipa-signing/extracted_ipa/Payload -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app bundle found"
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+          echo "✅ Found app at: $APP_PATH"
 
-  - name: Extract IPA contents
-    run: |
-      cd ~/work/ipa-signing
-      mkdir -p extracted_ipa
-      unzip -q input.ipa -d extracted_ipa
-      echo "✅ IPA extracted successfully"
-      ls -la extracted_ipa/
+      - name: Extract current code signature info
+        run: |
+          codesign -dvvv "${{ steps.find_app.outputs.app_path }}" 2>&1 || echo "⚠️  No existing signature found"
 
-  - name: Find app bundle
-    id: find_app
-    run: |
-      APP_PATH=$(find ~/work/ipa-signing/extracted_ipa/Payload -name "*.app" -type d | head -n 1)
-      if [ -z "$APP_PATH" ]; then
-        echo "❌ No .app bundle found"
-        exit 1
-      fi
-      echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
-      echo "✅ Found app at: $APP_PATH"
+      - name: Install certificates and provisioning profile
+        env:
+          CERT_DATA: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          # Only run if certificates are provided
+          if [ ! -z "$CERT_DATA" ]; then
+            echo "📦 Setting up signing credentials"
+            
+            # Decode and import certificate
+            echo "$CERT_DATA" | base64 --decode > cert.p12
+            security create-keychain -p "" ~/Library/Keychains/signing.keychain-db || true
+            security unlock-keychain -p "" ~/Library/Keychains/signing.keychain-db
+            security import cert.p12 -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k ~/Library/Keychains/signing.keychain-db
+            security set-key-partition-list -S apple-tool:,apple: -k "" ~/Library/Keychains/signing.keychain-db
+            
+            # Import provisioning profile if provided
+            if [ ! -z "$PROVISIONING_PROFILE" ]; then
+              mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+              echo "$PROVISIONING_PROFILE" | base64 --decode > profile.mobileprovision
+              cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+              echo "✅ Provisioning profile installed"
+            fi
+            
+            rm -f cert.p12 profile.mobileprovision
+            echo "✅ Certificates installed"
+          else
+            echo "⚠️  No certificate secrets provided - will attempt ad-hoc signing"
+          fi
 
-  - name: Extract current code signature info
-    run: |
-      codesign -dvvv "${{ steps.find_app.outputs.app_path }}" 2>&1 || echo "⚠️  No existing signature found"
+      - name: Re-sign IPA
+        run: |
+          APP_PATH="${{ steps.find_app.outputs.app_path }}"
+          
+          echo "🔐 Starting code signing process..."
+          
+          # Remove old signature
+          rm -rf "$APP_PATH/_CodeSignature"
+          
+          # Find all frameworks and sign them first
+          find "$APP_PATH/Frameworks" -name "*.framework" -o -name "*.dylib" | while read framework; do
+            if [ -e "$framework" ]; then
+              echo "Signing framework: $(basename $framework)"
+              codesign -f -s - "$framework" 2>/dev/null || true
+            fi
+          done
+          
+          # Sign the main app bundle
+          echo "Signing main app bundle..."
+          codesign -f -s - "$APP_PATH"
+          
+          # Verify signature
+          if codesign -v "$APP_PATH" 2>&1 | grep -q "valid on disk"; then
+            echo "✅ App successfully signed"
+          else
+            echo "⚠️  Signature verification warning (may still work)"
+          fi
 
-  - name: Install certificates and provisioning profile
-    env:
-      CERT_DATA: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
-      CERT_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-      PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-    run: |
-      # Only run if certificates are provided
-      if [ ! -z "$CERT_DATA" ]; then
-        echo "📦 Setting up signing credentials"
-        
-        # Decode and import certificate
-        echo "$CERT_DATA" | base64 --decode > cert.p12
-        security create-keychain -p "" ~/Library/Keychains/signing.keychain-db || true
-        security unlock-keychain -p "" ~/Library/Keychains/signing.keychain-db
-        security import cert.p12 -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k ~/Library/Keychains/signing.keychain-db
-        security set-key-partition-list -S apple-tool:,apple: -k "" ~/Library/Keychains/signing.keychain-db
-        
-        # Import provisioning profile if provided
-        if [ ! -z "$PROVISIONING_PROFILE" ]; then
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$PROVISIONING_PROFILE" | base64 --decode > profile.mobileprovision
-          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          echo "✅ Provisioning profile installed"
-        fi
-        
-        rm -f cert.p12 profile.mobileprovision
-        echo "✅ Certificates installed"
-      else
-        echo "⚠️  No certificate secrets provided - will attempt ad-hoc signing"
-      fi
+      - name: Repackage signed IPA
+        run: |
+          cd ~/work/ipa-signing
+          echo "📦 Repackaging IPA..."
+          
+          # Create zip with correct structure
+          cd extracted_ipa
+          zip -r -q ../signed.ipa Payload/ SwiftSupport/ 2>/dev/null || zip -r -q ../signed.ipa Payload/
+          cd ..
+          
+          if [ -f signed.ipa ]; then
+            ls -lh signed.ipa
+            echo "✅ Signed IPA ready"
+          else
+            echo "❌ Failed to create signed IPA"
+            exit 1
+          fi
 
-  - name: Re-sign IPA
-    run: |
-      APP_PATH="${{ steps.find_app.outputs.app_path }}"
-      
-      echo "🔐 Starting code signing process..."
-      
-      # Remove old signature
-      rm -rf "$APP_PATH/_CodeSignature"
-      
-      # Find all frameworks and sign them first
-      find "$APP_PATH/Frameworks" -name "*.framework" -o -name "*.dylib" | while read framework; do
-        if [ -e "$framework" ]; then
-          echo "Signing framework: $(basename $framework)"
-          codesign -f -s - "$framework" 2>/dev/null || true
-        fi
-      done
-      
-      # Sign the main app bundle
-      echo "Signing main app bundle..."
-      codesign -f -s - "$APP_PATH"
-      
-      # Verify signature
-      if codesign -v "$APP_PATH" 2>&1 | grep -q "valid on disk"; then
-        echo "✅ App successfully signed"
-      else
-        echo "⚠️  Signature verification warning (may still work)"
-      fi
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-ipa-artifact
+          path: ~/work/ipa-signing/signed.ipa
+          retention-days: 30
 
-  - name: Repackage signed IPA
-    run: |
-      cd ~/work/ipa-signing
-      echo "📦 Repackaging IPA..."
-      
-      # Create zip with correct structure
-      cd extracted_ipa
-      zip -r -q ../signed.ipa Payload/ SwiftSupport/ 2>/dev/null || zip -r -q ../signed.ipa Payload/
-      cd ..
-      
-      if [ -f signed.ipa ]; then
-        ls -lh signed.ipa
-        echo "✅ Signed IPA ready"
-      else
-        echo "❌ Failed to create signed IPA"
-        exit 1
-      fi
-
-  - name: Upload signed IPA
-    uses: actions/upload-artifact@v4
-    with:
-      name: signed-ipa-artifact
-      path: ~/work/ipa-signing/signed.ipa
-      retention-days: 30
-
-  - name: Summary
-    run: |
-      echo "=========================================="
-      echo "✅ IPA Signing Complete!"
-      echo "=========================================="
-      echo "📦 Output: signed-ipa-artifact"
-      echo "📍 File: signed.ipa"
-      echo "=========================================="
-
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "✅ IPA Signing Complete!"
+          echo "=========================================="
+          echo "📦 Output: signed-ipa-artifact"
+          echo "📍 File: signed.ipa"
+          echo "=========================================="
